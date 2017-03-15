@@ -145,9 +145,11 @@ A [csv file](https://github.com/mkearney/ncaa_bball_data/raw/master/data/ncaa-te
 ## data preview
 preview <- data %>%
     dplyr::arrange(-pts_diff) %>%
-    head(25)
+    head(25) %>%
+    knitr::kable() %>%
+    paste(collapse = "\n")
 ## add preview data to topline
-topline <- paste0(topline, knitr::kable(preview), "\n\n\n")
+topline <- paste0(topline, preview, "\n\n\n")
 
 ## save predictions table to README.md file
 dat17 %>%
