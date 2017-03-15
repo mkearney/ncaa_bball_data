@@ -1,2 +1,2 @@
-sports-reference.r
-^#*
+^.#*
+.Rhistory
