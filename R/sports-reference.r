@@ -17,6 +17,8 @@ schools <- paste0(
     "http://www.sports-reference.com",
     grep("^/cbb/schools/.*/$", schools, value = TRUE))
 
+data2 <- readr::read_csv("https://github.com/mkearney/ncaa_bball_data/raw/master/data/ncaa-team-data.csv")
+
 ## function to add school name as variable to data frames
 addschoolname <- function(x, school) {
     if (is.data.frame(x)) {
@@ -92,15 +94,28 @@ data$pts_total <- data$pts + data$ptsa
 ## code ncaa outcomes
 data <- data %>%
     mutate(
-        ncaa = ifelse(ncaa_tournament == "Won National Final", 128,
-        ifelse(ncaa_tournament == "Lost National Final", 64,
-        ifelse(ncaa_tournament == "Lost National Semifinal", 32,
-        ifelse(ncaa_tournament == "Lost Regional Final (Final Four)", 16,
-        ifelse(ncaa_tournament == "Lost Regional Final", 8,
-        ifelse(ncaa_tournament == "Lost Regional Semifinal", 4,
-        ifelse(ncaa_tournament == "Lost Second Round", 2,
-        ifelse(ncaa_tournament == "Lost First Round", 1, 0))))))))
+        ncaa_numeric = ifelse(is.na(ncaa_tournament), 0,
+                       ifelse(ncaa_tournament == "Won National Final", 48,
+                       ifelse(ncaa_tournament == "Lost National Final", 40,
+                       ifelse(ncaa_tournament == "Lost National Semifinal", 32,
+                       ifelse(ncaa_tournament == "Lost Regional Final (Final Four)", 24,
+                       ifelse(ncaa_tournament == "Lost Regional Final", 16,
+                       ifelse(ncaa_tournament == "Lost Regional Semifinal", 8,
+                       ifelse(ncaa_tournament == "Lost Third Round", 4,
+                       ifelse(ncaa_tournament == "Lost Second Round", 2,
+                       ifelse(ncaa_tournament == "Lost First Round", 1,
+                       ifelse(ncaa_tournament == "Lost Opening Round", 1, 0)))))))))))
     )
+
+## rename and reorganize
+data <- data %>%
+    dplyr::select(school, conf, rk, w:sos, pts_for = pts, pts_vs = ptsa, pts_total,
+                  ap_pre, ap_high, ap_final, pts_diff,
+                  ncaa_result = ncaa_tournament, ncaa_numeric = ncaa,
+                  season, coaches)
+
+## set this year to NA
+data$ncaa_numeric[data$season == "2016-17"] <- NA
 
 ## remove duplicate rows
 data <- unique(data)
@@ -108,55 +123,3 @@ data <- unique(data)
 ## save data
 readr::write_csv(data, "../data/ncaa-team-data.csv")
 
-## poisson model
-m1 <- glm(ncaa ~ wl + pts_total + srs + sos + ap_pre +
-              ap_high + ap_final + pts_diff,
-          data = dplyr::filter(data, season != "2016-17"),
-          family = poisson)
-
-## view results
-summary(m1)
-
-## view model results as table
-tmp <- tempfile(fileext = ".html")
-cat(texreg::htmlreg(m1), file = tmp)
-browseURL(tmp)
-
-##--------------------------------------------------------------------------------##
-##                             PREDICTIONS FOR 2017                               ##
-##--------------------------------------------------------------------------------##
-
-## 2017 data
-dat17 <- dplyr::filter(data, season == "2016-17")
-
-## set outcomes to missing
-dat17$ncaa <- NA_real_
-
-## get model estimates for 2017 data
-dat17$ncaa <- predict(m1, newdata = dat17)
-
-## topline text for readme file
-topline <- "## NCAA Men's Basketball Data
-A [csv file](https://github.com/mkearney/ncaa_bball_data/raw/master/data/ncaa-team-data.csv) of team-level ncaa data with tournament outcomes included.
-
-## Data preview
-"
-
-## data preview
-preview <- data %>%
-    dplyr::arrange(-pts_diff) %>%
-    head(25) %>%
-    knitr::kable() %>%
-    paste(collapse = "\n")
-## add preview data to topline
-topline <- paste0(topline, preview, "\n\n\n")
-
-## save predictions table to README.md file
-dat17 %>%
-    dplyr::select(school, conf, w, l, ncaa) %>%
-    dplyr::arrange(-ncaa) %>%
-    print(n = 100) %>%
-    knitr::kable() %>%
-    paste(collapse = "\n") %>%
-    paste0(topline, "\n\n## My NCAA model\n\n", .) %>%
-    cat(file = "~/r/ncaatourney/README.md", fill = TRUE)
