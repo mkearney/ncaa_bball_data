@@ -18,7 +18,7 @@ A [csv file](https://github.com/mkearney/ncaa_bball_data/raw/master/data/ncaa-te
 
 
 
-## My NCAA model
+## My NCAA model (multilevel model prediction estimates)
 
 |school                    |conf      |    wl|   sos| ap_pre|   ncaa_mlm|
 |:-------------------------|:---------|-----:|-----:|------:|----------:|

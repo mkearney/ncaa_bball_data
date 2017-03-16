@@ -70,5 +70,5 @@ dat17 %>%
     dplyr::arrange(-ncaa_mlm) %>%
     knitr::kable() %>%
     paste(collapse = "\n") %>%
-    paste0(topline, "\n\n## My NCAA model\n\n", .) %>%
+    paste0(topline, "\n\n## My NCAA model (multilevel model prediction estimates)\n\n", .) %>%
     cat(file = "~/r/ncaatourney/README.md", fill = TRUE)
