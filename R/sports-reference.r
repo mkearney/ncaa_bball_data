@@ -12,12 +12,10 @@ schools <- read_html(url) %>%
     html_nodes("a") %>%
     html_attr("href")
 
-## build full url and only seelct links to schools
+## build full url and only select links to schools
 schools <- paste0(
     "http://www.sports-reference.com",
     grep("^/cbb/schools/.*/$", schools, value = TRUE))
-
-data2 <- readr::read_csv("https://github.com/mkearney/ncaa_bball_data/raw/master/data/ncaa-team-data.csv")
 
 ## function to add school name as variable to data frames
 addschoolname <- function(x, school) {
