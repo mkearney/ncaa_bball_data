@@ -1,95 +1,96 @@
 ## install packages
-.packages <- c("dplyr", "lme4")
+.packages <- c("dplyr", "readr", "xgboost", "tfse", "dapr")
 if (any(!packages %in% installed.packages())) {
   install.packages(.packages[!.packages %in% install.packages()])
 }
-
-## load packages
-library(dplyr)
-library(lme4)
+source("R/funs.R")
 
 ## read data
 data <- readr::read_csv("data/ncaa-team-data.csv")
 
-fct_num <- function(.x) {
-  if (all(is.na(.x))) {
-    return(as.character(.x))
-  }
-  if (!is.character(.x)) {
-    return(.x)
-  }
-  .x[is.na(.x)] <- "NA"
-  if (tfse::n_uq(.x) == 2) {
-    .x <- .x == unique(.x)[1]
-  } else if (tfse::n_uq(.x) > 2 && tfse::n_uq(.x) < (.8 * length(.x))) {
-    .x <- factor(.x)
-  }
-  .x
-}
-x_mat <- function(.x) {
-  chr <- dapr::vap_lgl(.x, is.character)
-  lg <- dapr::vap_lgl(.x, ~ all(tfse::na_omit(.x) %in% c("TRUE", "FALSE")))
-  .x[lg & chr] <- dapr::lap(.x[lg & chr], as.logical)
-  lg <- dapr::vap_lgl(.x, is.logical)
-  .x[lg] <- dapr::lap(.x[lg], as.integer)
-  .x[] <- dapr::lap(.x, fct_num)
-  .x <- .x[dapr::vap_lgl(.x, ~ is.numeric(.x) | is.factor(.x) | is.logical(.x))]
-  kp <- unlist(lapply(.x, function(y) var(as.numeric(y), na.rm = TRUE))) > 0 |
-  	names(.x) %in% "ncaa_tournament"
-  .x <- .x[, kp]
-  #.x[grep("id$", names(.x))] <- dapr::lap(.x[grep("id$", names(.x))], as.character)
-  .x[grep("id$", names(.x))] <- dapr::lap(.x[grep("id$", names(.x))], ~ {
-    ifelse(is.na(.x), "NA", .x)
-  })
-  .x$season <- NULL
-  .x$.id <- seq_len(nrow(.x))
-  y <- matrix(.x$ncaa_tournament, ncol = 1)
-  .x <- model.matrix(ncaa_tournament ~ ., .x)
-  .x <- as.matrix(.x)
-  list(x = .x[, !colnames(.x) %in% c(".id", "y")], y = y,
-    id = .x[, ".id", drop = FALSE])
-}
+library(dplyr)
 
-tibble::as_tibble(head(x_mat(data)$x))
+data %>%
+	filter(ncaa_tournament > 3) %>%
+	tbltools::tabsort(coaches) %>%
+	dplyr::filter(n > 1) %>%
+	dplyr::pull(coaches) -> top_coaches
 
-x <- c("a", "a", "a", "a", "b", "c", "d", "d", "d", "e")
-coach_years <- function(x) {
-	unlist(purrr::map(unique(x),
-		~ seq_len(sum(x == .x))
-	))
-}
-
-data <- data %>%
+dd <- data %>%
 	arrange(school, year) %>%
-	mutate(coach_year = coach_years(coaches))
+	mutate(coach_year = coach_years(coaches),
+		coaches = ifelse(coaches %in% top_coaches, coaches, "NA"),
+		coaches = factor(coaches, levels = c(top_coaches, "NA")))
 
-dy <- filter(data, season == "2018-19")
-dx <- filter(data, season != "2018-19")
+#dy <- filter(data, season == "2018-19")
+#dx <- filter(data, season != "2018-19")
 
-data_conf <- data %>%
+data_conf <- dd %>%
 	group_by(conf, year) %>%
 	summarise_if(is.numeric, mean, na.rm = TRUE) %>%
 	select(-ncaa_tournament) %>%
 	ungroup()
 
-names(data_conf)[-c(1:2)] <- paste0("confsum_", names(data_conf)[-c(1:2)])
+names(data_conf)[-c(1:2)] <- paste0("conf_", names(data_conf)[-c(1:2)])
 
-dd <- x_mat(select(data, -coaches) %>% left_join(data_conf))
-this_year <- data$season == "2018-19"
+m <- x_mat(dd %>% left_join(data_conf))
+
+
+seq_seed <- function(n) {
+	x <- unlist(Map(rep, seq_len(ceiling(length(n) / 4)), 4))
+	x[seq_len(length(n))]
+}
+
+data_conf$confsum_srs
+
+sqr <- function(x) x^2
+
+
+
+dd <- dd %>%
+	left_join(data_conf) %>%
+	mutate(conf_srs = sqr(tfse::rescale_standard(conf_srs)),
+		srs = sqr(tfse::rescale_standard(srs)),
+		score = wl_conf * conf_srs,
+		score = score + wl * srs) %>%
+	group_by(year, conf) %>%
+	mutate(conf_sore = mean(score, na.rm = TRUE)) %>%
+	group_by(year) %>%
+	arrange(desc(score)) %>%
+	mutate(rk = seq_seed(score)) %>%
+	ungroup()
+
+.x <- select(dd, -ap_final, -conf_ap_final)
+.y <- score
+dd
+
+m <- x_mat(ncaa_tournament, select(dd, -season, -ap_final, -conf_ap_final,
+	-is_ap_final))
+this_year <- dd$season == "2018-19"
 
 m1 <- xgboost::xgboost(
-  dd$x[!this_year, ],
-  label = dd$y[!this_year, ],
-  eta = .20,
-  nrounds = 10)
+  m$x[!this_year, ],
+  label = m$y[!this_year, ],
+  eta = .15,
+  nrounds = 50)
+
+m1 <- xgboost::xgboost(
+	m$x[!this_year, ],
+  label = m$y[!this_year, ],
+  #eta = .50,
+	xgb_model = m1,
+	nrounds = 100)
 
 ## pred influence
-xgboost::xgb.importance(model = xgboost::xgb.Booster.complete(m1)) %>% head(40)
+m1 %>%
+	xgboost::xgb.Booster.complete() %>%
+	xgboost::xgb.importance(model = .) %>%
+	head(30)
 
 ## get predictions
-pred <- predict(m1, newdata = dd$x, type = "response")
+pred <- predict(m1, newdata = m$x, type = "response")
 
-am <- mutate(data, pred = pred) %>%
+am <- mutate(dd, pred = pred) %>%
 	select(school, year, seed, ncaa_tournament, pred) %>%
 	filter(year == 2019, seed < 17) %>%
 	group_by(seed) %>%
@@ -99,8 +100,8 @@ am <- mutate(data, pred = pred) %>%
 		avg_money = prob * 25 * 8) %>%
 	select(seed, avg_money)
 
-mutate(data, pred = pred) %>%
-	select(school, year, seed, ncaa_tournament, pred) %>%
+mutate(dd, pred = pred) %>%
+	select(school, year, score, seed, ncaa_tournament, pred) %>%
 	filter(year == 2019, seed < 17) %>%
 	arrange(desc(pred)) %>%
 	mutate(pred = pred - 1,
@@ -108,12 +109,76 @@ mutate(data, pred = pred) %>%
 		money = prob * 100 * 8) %>%
 	left_join(am) %>%
 	arrange(desc(pred)) %>%
-	select(school, seed, pred, money, avg_money) %>%
+	select(school, score, seed, pred, money, avg_money) %>%
 	mutate_if(is.numeric, round, 2) %>%
 	rename(exp_value = money, seed_value = avg_money) %>%
 	mutate(rel_value = exp_value - seed_value) %>%
+	print(n = 40) %>%
 	readr::write_csv("~/Dropbox/ncaa-preds.csv")
 
+
+saveRDS(bb, "data/bracket.rds")
+
+split_bracket <- function(x) {
+  st <- 1
+  m <- length(x)
+  h <- m / 2
+  hh <- (m / 2) + 1
+  d <- do.call(rbind, Map(c, x[seq(st, h)], x[c(m:hh)]))
+  colnames(d) <- c("home", "away")
+  d <- tibble::as_tibble(d)
+  d
+}
+
+dd
+gsub(" ", "-", tolower(bb$school))
+
+dd$overall <- NA_integer_
+grep("temp", bb$school, ignore.case = TRUE, value = TRUE)
+
+
+print(bb, n = 60)
+
+dds <- dd$school[dd$year == 2019]
+grep("temp", dds, ignore.case = TRUE)
+dds <- sub("louisiana-state", "lsu", dds)
+dds <- sub("central-florida", "ucf", dd$school)
+dds <- sub("mississippi", "ole-miss", dd$school)
+dds <- sub("virginia-commonwealth", "vcu", dd$school)
+dds <- sub("louisiana-state", "lsu", dd$school)
+dds <- sub("louisiana-state", "lsu", dd$school)
+dd$overall[dd$year == 2019] <- bb$overall[match(sub("state", "st.", dd$school[dd$year == 2019]),
+	gsub(" ", "-", tolower(bb$school)))]
+
+select(dd, school, year, seed, overall) %>%
+	filter(year == 2019, seed < 20) %>%
+	arrange(overall) %>%
+	print(n = 66)
+
+match(dd$school[dd$year == 2019], gsub(" ", "-", tolower(bb$school)))
+
+foo <- function(i) {
+	i <- dd$year == 2019 & dd$overall == i & !is.na(dd$overall)
+	dd[i, c("school", "score")]
+}
+unl_mat <- function(x) {
+  unlist(lapply(seq_len(nrow(x)), function(i) c(x[i, ])))
+}
+foo(64)
+
+tfse::nin(1:64, unl_mat(split_bracket(1:64)))
+
+
+filter(dd, overall == 57)
+
+ha <- lapply(unl_mat(split_bracket(1:64)), foo)
+
+i <- 5
+which(purrr::map_int(ha, nrow) == 0)
+
+for (i in seq_along(ha)) {
+	ha[[i]]$place <- names(ha)[i]
+}
 
 am <- mutate(data, pred = pred) %>%
 	select(school, year, seed, ncaa_tournament, pred) %>%
